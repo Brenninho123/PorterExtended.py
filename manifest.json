@@ -1,0 +1,98 @@
+{
+	"entries": [
+		{
+			"id": "change-character-event",
+			"hxcFile": "ChangeCharacterEvent.hxc",
+			"description": "Switches a character (BF/Dad/GF) mid-song via a scripted song event",
+			"luaNameHints": [
+				"changecharacter.lua",
+				"change_character.lua",
+				"changecharacterevent.lua",
+				"characterswitch.lua"
+			],
+			"signatures": [
+				"changeCharacter\\s*\\(",
+				"setCharacter\\s*\\(",
+				"\\bcharacterType\\b",
+				"\\bboyfriend\\b.*\\bdad\\b.*\\bgirlfriend\\b"
+			],
+			"keywords": ["character", "boyfriend", "dad", "girlfriend", "switch", "target", "songevent"]
+		},
+		{
+			"id": "combo-position-nx",
+			"hxcFile": "ComboPositionNX.hxc",
+			"description": "Repositions the combo popup offsets for the Nucleon note style",
+			"luaNameHints": [
+				"comboposition.lua",
+				"combo_position.lua",
+				"comboposition_nx.lua",
+				"combopositionnx.lua"
+			],
+			"signatures": [
+				"comboPopUps",
+				"noteStyle",
+				"nucleon",
+				"offset\\s*\\["
+			],
+			"keywords": ["combo", "position", "offset", "notestyle", "nucleon", "popup", "downscroll"]
+		},
+		{
+			"id": "tadf-hud",
+			"hxcFile": "TADFHudModule.hxc",
+			"description": "Custom animated health bar HUD with a low-HP glitch shader plus camera/volume effects, scoped to specific songs",
+			"luaNameHints": [
+				"tadfhud.lua",
+				"tadf_hud.lua",
+				"customhealthbar.lua",
+				"healthbar_tadf.lua",
+				"glitchhealthbar.lua"
+			],
+			"signatures": [
+				"healthBar",
+				"iconP1|iconP2",
+				"glitch",
+				"lowHp|low_hp",
+				"HealthIcon",
+				"downscroll"
+			],
+			"keywords": ["healthbar", "hud", "glitch", "lowhp", "icon", "shader", "camera", "volume"]
+		},
+		{
+			"id": "song-credit-box",
+			"hxcFile": "SongCreditBoxModule.hxc",
+			"description": "Slide-in song credit popup showing the composer name and icon, keyed per song id",
+			"luaNameHints": [
+				"songcredit.lua",
+				"song_credit_box.lua",
+				"credits_popup.lua",
+				"composercredit.lua"
+			],
+			"signatures": [
+				"songCredit",
+				"composerName",
+				"tween",
+				"songIcon",
+				"currentSong"
+			],
+			"keywords": ["credit", "composer", "songid", "tween", "popup", "icon", "slide"]
+		},
+		{
+			"id": "bsidediff",
+			"hxcFile": "bsidediff.hxc",
+			"description": "Adds extra difficulty entries (bsides, flipped, rechart) to the default difficulty list",
+			"luaNameHints": [
+				"bsidediff.lua",
+				"bsides.lua",
+				"extradifficulties.lua",
+				"extra_difficulties.lua"
+			],
+			"signatures": [
+				"DEFAULT_DIFFICULTY_LIST_FULL",
+				"bsides",
+				"flipped",
+				"rechart"
+			],
+			"keywords": ["difficulty", "bsides", "flipped", "rechart", "list", "push"]
+		}
+	]
+}
