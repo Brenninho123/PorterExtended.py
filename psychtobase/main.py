@@ -244,6 +244,15 @@ class ModConverter:
         return self.report
 
     def _convertModpackMeta(self) -> None:
+        creditsDir = Constants.FILE_LOCS.get('CREDITSTXT')
+        psychCredits = self._psychPath(creditsDir[0])
+        contributors = []
+
+        if psychCredits.exists():
+            rawCredits = self._readText(psychCredits)
+            if rawCredits is not None:
+                contributors = ModTools.parseCreditsFile(rawCredits)
+
         packJsonDir = Constants.FILE_LOCS.get('PACKJSON')
         psychPackJson = self._psychPath(packJsonDir[0])
         bgPackJson = self._bgPath(packJsonDir[1])
@@ -252,7 +261,7 @@ class ModConverter:
             raw = self._readJson(psychPackJson)
             if raw is not None:
                 try:
-                    converted = ModTools.convertPack(raw)
+                    converted = ModTools.convertPack(raw, contributors=contributors)
                     self._writeJson(bgPackJson, converted)
                 except Exception as e:
                     self.report.logError(f'Could not convert pack.json: {e}')
@@ -275,15 +284,9 @@ class ModConverter:
                 except Exception as e:
                     self.report.logError(f'Could not write default pack.png: {e}')
 
-        creditsDir = Constants.FILE_LOCS.get('CREDITSTXT')
-        psychCredits = self._psychPath(creditsDir[0])
         bgCredits = self._bgPath(creditsDir[1])
-
         if psychCredits.exists():
-            rawCredits = self._readText(psychCredits)
-            if rawCredits is not None:
-                converted = ModTools.convertCredits(rawCredits)
-                self._writeText(bgCredits, converted)
+            self._writeText(bgCredits, ModTools.creditsFromContributors(contributors))
         else:
             self.report.logError(f'Could not find {psychCredits}')
 
