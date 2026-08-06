@@ -3,6 +3,8 @@ name: FNF Porter Build
 on:
   pull_request:
     branches: [ "main" ]
+  push:
+    tags: [ "v*.*.*" ]
   workflow_dispatch:
     inputs:
       build_windows:
@@ -23,15 +25,15 @@ on:
         options: [onefile, onedir]
         default: onefile
       run_checks:
-        description: Run syntax checks before building
+        description: Run checks before building
         type: boolean
         default: true
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
-  group: build-${{ github.event.pull_request.number || github.run_id }}
+  group: build-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,6 +47,13 @@ jobs:
           python-version: "3.12"
       - name: Verify Python syntax
         run: python -m compileall -q .
+      - name: Install dependencies for audit
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pip-audit
+      - name: Audit dependencies for known vulnerabilities
+        run: pip-audit -r requirements.txt --skip-editable
+        continue-on-error: true
 
   setup:
     needs: checks
@@ -52,7 +61,22 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      version: ${{ steps.version.outputs.version }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build matrix
         id: matrix
         shell: bash
@@ -68,9 +92,9 @@ jobs:
           fi
 
           ENTRIES="[]"
-          [ "$WINDOWS" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"windows-latest","name":"Windows"}]')
-          [ "$MACOS" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"macos-latest","name":"macOS"}]')
-          [ "$LINUX" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"ubuntu-latest","name":"Linux"}]')
+          [ "$WINDOWS" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"windows-latest","name":"Windows","ext":"zip"}]')
+          [ "$MACOS" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"macos-latest","name":"macOS","ext":"tar.gz"}]')
+          [ "$LINUX" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"ubuntu-latest","name":"Linux","ext":"tar.gz"}]')
 
           echo "matrix={\"include\":$ENTRIES}" >> "$GITHUB_OUTPUT"
 
@@ -98,6 +122,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Cache PyInstaller build cache
+        uses: actions/cache@v4
+        with:
+          path: build
+          key: pyinstaller-${{ matrix.os }}-${{ hashFiles('psychtobase/**/*.py', 'build.spec') }}
+          restore-keys: |
+            pyinstaller-${{ matrix.os }}-
+
       - name: Determine PyInstaller command
         id: pyinstaller
         shell: bash
@@ -114,11 +146,31 @@ jobs:
       - name: Build with PyInstaller
         run: ${{ steps.pyinstaller.outputs.command }}
 
+      - name: Package and checksum
+        id: package
+        shell: bash
+        run: |
+          cd dist
+          VERSION="${{ needs.setup.outputs.version }}"
+          ARCHIVE="FNF-Porter-${VERSION}-${{ matrix.name }}.${{ matrix.ext }}"
+
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            7z a "$ARCHIVE" * > /dev/null
+          else
+            tar -czf "$ARCHIVE" *
+          fi
+
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          echo "archive=dist/$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "checksum=dist/$ARCHIVE.sha256" >> "$GITHUB_OUTPUT"
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: "FNF-Porter (${{ matrix.name }})"
-          path: dist/*
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
           if-no-files-found: error
           retention-days: 14
 
@@ -127,5 +179,32 @@ jobs:
         shell: bash
         run: |
           echo "### FNF Porter — ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Version: ${{ needs.setup.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
           echo "- Mode: ${{ inputs.build_mode || 'onefile' }} (Windows uses build.spec regardless)" >> "$GITHUB_STEP_SUMMARY"
           echo "- Status: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    needs: [setup, build]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Combine checksums
+        run: cat release-assets/*.sha256 > release-assets/SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "FNF Porter ${{ needs.setup.outputs.version }}"
+          generate_release_notes: true
+          files: |
+            release-assets/*.zip
+            release-assets/*.tar.gz
+            release-assets/SHA256SUMS.txt
