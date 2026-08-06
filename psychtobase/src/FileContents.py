@@ -1,203 +1,116 @@
-CHANGE_CHARACTER_EVENT_HXC_NAME = 'ChangeCharacterEvent.hxc'
-CHANGE_CHARACTER_EVENT_HXC_CONTENTS = """import funkin.play.character.CharacterType;
-import funkin.modding.module.ModuleHandler;
+import re
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import Optional
+
+
+@dataclass
+class ScriptConversion:
+    id: str
+    hxcName: str
+    hxcContents: str
+    luaNameHints: list = field(default_factory=list)
+    luaSignatures: list = field(default_factory=list)
+
+
+class ScriptConversionRegistry:
+    _entries: list = []
+
+    @classmethod
+    def register(cls, entry: ScriptConversion):
+        cls._entries.append(entry)
+        return entry
+
+    @classmethod
+    def findMatch(cls, luaFilename: str, luaContents: str) -> Optional[ScriptConversion]:
+        normalizedName = luaFilename.lower().strip()
+        for entry in cls._entries:
+            if normalizedName in [hint.lower() for hint in entry.luaNameHints]:
+                return entry
+
+        bestMatch = None
+        bestScore = 0
+        for entry in cls._entries:
+            score = sum(1 for sig in entry.luaSignatures if re.search(sig, luaContents, re.IGNORECASE))
+            threshold = max(1, len(entry.luaSignatures) // 2)
+            if score >= threshold and score > bestScore:
+                bestScore = score
+                bestMatch = entry
+        return bestMatch
+
+    @classmethod
+    def all(cls):
+        return list(cls._entries)
+
+
+CHANGE_CHARACTER_EVENT = ScriptConversionRegistry.register(ScriptConversion(
+    id='change-character-event',
+    hxcName='ChangeCharacterEvent.hxc',
+    hxcContents=CHANGE_CHARACTER_EVENT_HXC_CONTENTS,
+    luaNameHints=['changecharacter.lua', 'change_character.lua', 'changecharacterevent.lua'],
+    luaSignatures=[r'changeCharacter\s*\(', r'setCharacter\s*\(', r'CharacterType', r'boyfriend|dad|girlfriend']
+))
+
+COMBO_POSITION_NX = ScriptConversionRegistry.register(ScriptConversion(
+    id='combo-position-nx',
+    hxcName='ComboPositionNX.hxc',
+    hxcContents="""import funkin.play.PlayState;
 import funkin.modding.module.Module;
-import funkin.play.character.BaseCharacter;
-import funkin.play.character.CharacterDataParser;
-import funkin.play.event.ScriptedSongEvent;
-import funkin.play.PlayState;
-import openfl.utils.Assets;
-//import Reflect;
+import funkin.modding.events.UpdateScriptEvent;
+import flixel.FlxG;
 
-/**
- * @author MayoOddToSee
- */
-class ChangeCharacterEvent extends ScriptedSongEvent {
-	static var BF = 'bf'; //does static even do or mean anything lol
-	static var DAD = 'dad';
-	static var GF = 'gf';
-	
-	var dataValue:Dynamic;
-
-	public function new() {
-		super('Change Character');
+class ComboPositionNX extends Module
+{
+	function new()
+	{
+		super('ComboPositionNX', 0, {state: PlayState});
 	}
 
-	override function getEventSchema() {
-		var map = ["Boyfriend" => BF, "Dad" => DAD, "Girlfriend" => GF,];
-
-		var charMap = ["Boyfriend" => "bf"];
-		for (char in CharacterDataParser.listCharacterIds()) {
-			charMap.set(CharacterDataParser.fetchCharacterData(char).name, char);
-		}
-
-		return [
-			{
-				name: "target",
-				title: "Target",
-				type: "enum",
-				defaultValue: BF,
-				keys: map,
-			},
-			{
-				name: "char",
-				title: "Character",
-				type: "enum",
-				defaultValue: "bf",
-				keys: charMap,
-			}
-		];
+	function isTargetNoteStyle():Bool
+	{
+		var game = PlayState.instance;
+		if (game == null || game.noteStyle == null) return false;
+		return (game.noteStyle.id ?? '').toLowerCase() == 'nucleon';
 	}
 
-	override function handleEvent(data) {
-		if (data.value != null) {
-			dataValue = data.value;
-			var target = getValue('target', BF);
-			ModuleHandler.getModule('change-character-handler').scriptCall('changeCharacter', [
-				getValue('char', 'bf'),
-				switch target {
-					case BF:
-						CharacterType.BF;
-					case DAD:
-						CharacterType.DAD;
-					case GF:
-						CharacterType.GF;
-				},
-				target
-			]);
-		}
+	override function onUpdate(event:UpdateScriptEvent)
+	{
+		super.onUpdate(event);
+
+		if (!isTargetNoteStyle()) return;
+
+		var game = PlayState.instance;
+		if (game == null || game.comboPopUps == null) return;
+
+		game.comboPopUps.offsets[0] = -450 - (FlxG.onMobile ? 100 : 0);
+		game.comboPopUps.offsets[1] = game.playerStrumline.isDownscroll ? -175 : 350;
 	}
+}""",
+    luaNameHints=['comboposition.lua', 'combo_position.lua', 'comboposition_nx.lua', 'combopositionnx.lua'],
+    luaSignatures=[r'comboPopUps', r'noteStyle', r'nucleon', r'setPropertyFromGroup.*offset']
+))
 
-	//helper function
-	function getValue(field:String, def:Dynamic) {
-		var value = Assets.resolveClass("Reflect").field(dataValue, field);
-		if (value == null)
-			return def;
-		else
-			return value;
-	}
-}
 
-//this class actually changes the characters and stuff
-class ChangeCharacterHandler extends Module {
-	var debug = false;
-	var switchedChars = false;
-	var chars:Array<Map<String, BaseCharacter>> = [
-		["" => null],
-		["" => null],
-		["" => null],
-	];
-	var latest:Array<BaseCharacter> = [];
-	var charsFetched:Array<String> = [];
-	var strid:Array<String> = ['bf', 'dad', 'gf'];
-	var tid:Array<CharacterType> = [CharacterType.BF, CharacterType.DAD, CharacterType.GF];
+def convertLuaFile(luaPath, outputDir) -> Optional[Path]:
+    luaPath = Path(luaPath)
+    contents = luaPath.read_text(encoding='utf-8', errors='ignore')
+    match = ScriptConversionRegistry.findMatch(luaPath.name, contents)
+    if match is None:
+        print(f"No known hxc conversion found for {luaPath.name}")
+        return None
 
-	public function new() {
-		super('change-character-handler');
-	}
+    outputPath = Path(outputDir)
+    outputPath.mkdir(parents=True, exist_ok=True)
+    targetFile = outputPath / match.hxcName
+    targetFile.write_text(match.hxcContents, encoding='utf-8')
+    print(f"Converted {luaPath.name} -> {match.hxcName}")
+    return targetFile
 
-	override function onCreate(e) {
-		trace('whaaat are you working now bitch');
-	}
 
-	override function onSongRetry() {
-		super.onSongRetry();
-
-		if(!PlayState.instance.isMinimalMode) {
-			for(i in 0...3) {
-				replaceChar(tid[i], strid[i], defaults[i]);
-			}
-		}
-	}
-
-	override function onStateChangeEnd(event){
-        super.onStateChangeEnd(event);
-        ok = false;
-		for(map in chars) {
-			for(char in map) {
-				if(char != null) {
-					if(debug) trace('IM KILLING YOU', char.characterName);
-					char.destroy();
-				}
-			}
-			map.clear();
-		}
-    }
-
-	function changeCharacter(character:String, characterType:CharacterType, characterTypeString:String) {
-		var id = tid.indexOf(characterType);
-		var char = chars[id].get(character);
-		if(char == null) {
-			trace('couldnt find the preloaded :(', character, characterTypeString);
-			char = CharacterDataParser.fetchCharacter(char);
-			chars[id].set(character, char);
-			if(char == null) {
-				if(debug) trace('it was STILL null', character, characterTypeString);
-				return;
-			}
-		}else{
-			if(debug) trace('found preloaded char', character, characterTypeString);
-		}
-		replaceChar(characterType, characterTypeString, char);
-	}
-
-	function replaceChar(characterType:CharacterType, characterTypeString:String, char:BaseCharacter) {
-		var old = PlayState.instance.currentStage.getCharacter(characterTypeString);
-		if(old == char) return;
-		var index = PlayState.instance.currentStage.members.indexOf(old);
-		PlayState.instance.remove(char);
-		PlayState.instance.currentStage.remove(old);
-		hideChar(old);
-		char.scrollFactor.set(1, 1);
-		char.alpha = 1;
-		PlayState.instance.currentStage.addCharacter(char, characterType);
-		PlayState.instance.currentStage.remove(char);
-		PlayState.instance.currentStage.insert(index, char);
-	}
-
-	function hideChar(char:BaseCharacter) {
-		char.alpha = .00001;
-		char.scrollFactor.set();
-		char.screenCenter();
-		PlayState.instance.add(char);
-	}
-
-	var ok = false;
-	var defaults:Array<BaseCharacter> = [];
-	override function onUpdate(e) {
-		super.onUpdate(e);
-		if(PlayState.instance != null && !PlayState.instance.isMinimalMode && PlayState.instance.currentStage != null && !ok) {
-			ok = true;
-			var i = 0;
-			for(char in [PlayState.instance.currentStage.getBoyfriend(), PlayState.instance.currentStage.getDad(), PlayState.instance.currentStage.getGirlfriend()]) {
-				if (char == null) continue;
-				chars[i].set(char.characterId, char);
-				defaults[i] = char;
-				i++;
-			}
-			for(event in PlayState.instance.songEvents) {
-				if(event.value != null) {
-					//??????????????????
-					var char = Assets.resolveClass("Reflect").field(event.value, 'char');
-					var target = Assets.resolveClass("Reflect").field(event.value, 'target');
-					if(char != null && target != null && !chars[target].exists(char)) {
-						var hi = CharacterDataParser.fetchCharacter(char);
-						chars[strid.indexOf(target)].set(char, hi);
-						hi.characterType = tid[strid.indexOf(target)];
-						hideChar(hi);
-					}
-				}
-			}
-		}
-	}
-}"""
-# https://youtu.be/eB6txyhHFG4
-
-# VocalFan, you are officially removed from the dev team! I hate this song. 😡
-# https://youtu.be/22tVWwmTie8?si=2TNmHTDoT7UgQvZ-
-
-# Calm down, dude! This song is better!
-# https://youtu.be/VMp55KH_3wo
-
-# Shoutout to simpleflips
-# https://www.youtube.com/watch?v=JmK98ehX6rc
+def convertLuaFolder(luaFolder, outputDir) -> list:
+    results = []
+    for luaFile in Path(luaFolder).glob('*.lua'):
+        converted = convertLuaFile(luaFile, outputDir)
+        if converted:
+            results.append(converted)
+    return results
