@@ -1,0 +1,131 @@
+name: FNF Porter Build
+
+on:
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+    inputs:
+      build_windows:
+        description: Build Windows
+        type: boolean
+        default: true
+      build_macos:
+        description: Build macOS
+        type: boolean
+        default: true
+      build_linux:
+        description: Build Linux
+        type: boolean
+        default: true
+      build_mode:
+        description: PyInstaller mode (macOS/Linux only — Windows always uses build.spec)
+        type: choice
+        options: [onefile, onedir]
+        default: onefile
+      run_checks:
+        description: Run syntax checks before building
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    if: inputs.run_checks != false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify Python syntax
+        run: python -m compileall -q .
+
+  setup:
+    needs: checks
+    if: always() && needs.checks.result != 'failure'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Build matrix
+        id: matrix
+        shell: bash
+        run: |
+          WINDOWS="${{ inputs.build_windows }}"
+          MACOS="${{ inputs.build_macos }}"
+          LINUX="${{ inputs.build_linux }}"
+
+          if [ "${{ github.event_name }}" != "workflow_dispatch" ]; then
+            WINDOWS=true
+            MACOS=true
+            LINUX=true
+          fi
+
+          ENTRIES="[]"
+          [ "$WINDOWS" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"windows-latest","name":"Windows"}]')
+          [ "$MACOS" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"macos-latest","name":"macOS"}]')
+          [ "$LINUX" = "true" ] && ENTRIES=$(echo "$ENTRIES" | jq -c '. + [{"os":"ubuntu-latest","name":"Linux"}]')
+
+          echo "matrix={\"include\":$ENTRIES}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: setup
+    if: needs.setup.outputs.matrix != '{"include":[]}'
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Determine PyInstaller command
+        id: pyinstaller
+        shell: bash
+        run: |
+          MODE="${{ inputs.build_mode || 'onefile' }}"
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            echo "command=pyinstaller build.spec" >> "$GITHUB_OUTPUT"
+          elif [ "${{ matrix.os }}" = "macos-latest" ]; then
+            echo "command=pyinstaller --$MODE psychtobase/main.py --icon=icon.icns --noconsole -n \"FNF Porter\"" >> "$GITHUB_OUTPUT"
+          else
+            echo "command=pyinstaller --$MODE psychtobase/main.py --noconsole -n \"FNF Porter\"" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build with PyInstaller
+        run: ${{ steps.pyinstaller.outputs.command }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: "FNF-Porter (${{ matrix.name }})"
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Write build summary
+        if: always()
+        shell: bash
+        run: |
+          echo "### FNF Porter — ${{ matrix.name }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Mode: ${{ inputs.build_mode || 'onefile' }} (Windows uses build.spec regardless)" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Status: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
